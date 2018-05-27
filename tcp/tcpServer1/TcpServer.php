@@ -19,7 +19,7 @@ class TcpServer
     protected $servType = 'tcp';
 
     protected $application = 'SWOOLE';
-    protected $serverName = 'TCPTEST';
+    protected $serverName = 'TCPTEST1';
 
     public function start()
     {

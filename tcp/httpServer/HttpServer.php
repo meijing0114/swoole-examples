@@ -6,13 +6,17 @@
  * Time: 下午3:50.
  */
 
+require_once "./Request.php";
+require_once "./Response.php";
+require_once "./EndpointF.php";
+require_once "./NetworkHelper.php";
 
 class HttpServer
 {
     protected $sw;
 
     protected $host = '0.0.0.0';
-    protected $port = '28892';
+    protected $port = '28893';
     protected $worker_num = 4;
     protected $servType = 'http';
 
@@ -42,7 +46,6 @@ class HttpServer
         $this->sw->on('ManagerStart', array($this, 'onManagerStart'));
         $this->sw->on('WorkerStart', array($this, 'onWorkerStart'));
         $this->sw->on('Connect', array($this, 'onConnect'));
-        $this->sw->on('Receive', array($this, 'onReceive'));
         $this->sw->on('Close', array($this, 'onClose'));
         $this->sw->on('WorkerStop', array($this, 'onWorkerStop'));
 
@@ -111,50 +114,71 @@ class HttpServer
     {
     }
 
-    // 这里应该找到对应的解码协议类型,执行解码,并在收到逻辑处理回复后,进行编码和发送数据 todo
-    public function onReceive($server, $fd, $fromId, $data)
-    {
-
-        $buf = "success";
-        $length = 4 + strlen($buf);
-        $headerLen = pack('N',$length);
-
-        $rspBuf = $headerLen.$buf;
-
-        $response = new Response();
-        $response->fd = $fd;
-        $response->fromFd = $fromId;
-        $response->server = $server;
-
-        $response->send($rspBuf);
-    }
-
     public function onRequest($request, $response)
     {
         $req = new Request();
         $req->data = get_object_vars($request);
 
 
-        $req->servType = $this->servType;
+
+/* 加上这段对tars主控的请求,就会出现coredump
+ *         $helper1 = new NetworkHelper();
 
 
-        $requestBuf = "test";
+        $registry = $this->packRegistry();
+        $result =  $helper1->swooleCoroutineTcp("172.16.0.161",17890,$registry);
+        $data = $result[0];
+        // 接下来解码
+        $decodeRet = \TUPAPI::decode($data, 3);
+
+        $sBuffer = $decodeRet['sBuffer'];
+file_put_contents("/data/ted/swoole_test/tcp/data",$data);
+        $endpoint = \TUPAPI::getVector('',
+            new \TARS_Vector(new EndpointF()), $sBuffer, false, 3);
+
+        error_log( "endpoint:".var_export($endpoint,true));
+*/
+        $buf = "test";
+
+        $len = 4 + strlen($buf);
+
+        $iHeaderLen = pack('N',$len);
+
+        $requestBuf = $iHeaderLen.$buf;
+
         error_log("fist time start\n");
-        $this->swooleCoroutineTcp("172.16.0.161",28891,$requestBuf);
+
+        $respBuf1 =  $this->swooleCoroutineTcp("172.16.0.161",28891,$requestBuf)[1];
+
+        /**
+         * 强行插入了扩展解包逻辑,会导致下一次协程connect卡住
+         */
+        //$data = file_get_contents("/data/ted/swoole_test/tcp/data");
+        //$decodeRet = \TUPAPI::decode($data, 3);
+        //$sBuffer = $decodeRet['sBuffer'];
+        //$endpoint = \TUPAPI::getVector('',
+        //    new \TARS_Vector(new EndpointF()), $sBuffer, false, 3);
+
+        // 这里尝试了把上面扩展的代码注释掉,
+        // 如果$endpoint变量未定义,也会卡住,所以如果变量的定义不是在php空间内,打印这个变量,协程下一次就会卡住?
+
+        error_log( "endpoint:".var_export($endpoint,true));
 
         error_log( "fist time end\n");
 
         error_log( "second time start\n");
 
-        swooleCoroutineTcp("172.16.0.161",28891,$requestBuf);
+        $respBuf2 = $this->swooleCoroutineTcp("172.16.0.161",28892,$requestBuf)[1];
 
         error_log( "second time end\n");
-
 
 
         $resp = new Response();
         $resp->servType = $this->servType;
         $resp->resource = $response;
+        $resp->server = $this->sw;
+
+        $resp->send($respBuf1."...".$respBuf2);
 
     }
     private function swooleCoroutineTcp($sIp, $iPort, $requestBuf, $timeout = 2)
@@ -168,28 +192,61 @@ class HttpServer
             'package_body_offset' => 0,       //第几个字节开始计算长度
             'package_max_length' => 2000000,  //协议最大长度
         ));
-
+error_log("this before connect");
         if (!$client->connect($sIp, $iPort, $timeout)) {
 
             error_log( "socket connect failed\n");
         }
-
+error_log("this after connect");
         if (!$client->send($requestBuf)) {
             $client->close();
             error_log( "socket send failed\n");
+            return "";
         }
 
         //读取最多32M的数据
-        $responseBuf = $client->recv();
+        $data = $client->recv();
 
-        if (empty($responseBuf)) {
+        if (empty($data)) {
             $client->close();
             error_log( "socket rspbuf empty\n");
+            return "";
         }
 
-        error_log( "responseBuf:".$responseBuf."\n");
+        $list = unpack('Nlen', substr($data, 0, 4));
+        $packLen = $list['len'];
+        $responseBuf = substr($data, 4, $packLen - 4);
 
-        return $responseBuf;
+        return [
+            $data,
+            $responseBuf
+        ];
+    }
+
+    private function packRegistry() {
+        $encodeBufs = [];
+
+        $buffer = self::putString('id', 1, "PHPTest.PHPServer.obj", 3);
+        $encodeBufs['id'] = $buffer;
+
+        $requestBuf = \TUPAPI::encode(3, 1,
+            'tars.tarsregistry.QueryObj', 'findObjectById', 0,
+            0, 2000, [],
+            [], $encodeBufs);
+
+        return $requestBuf;
+
+    }
+
+    public static function putString($paramName, $tag, $string, $iVersion)
+    {
+            if ($iVersion === 1) {
+                $buffer = \TUPAPI::putString($tag, $string, $iVersion);
+            } else {
+                $buffer = \TUPAPI::putString($paramName, $string, $iVersion);
+            }
+
+            return $buffer;
     }
 
 }

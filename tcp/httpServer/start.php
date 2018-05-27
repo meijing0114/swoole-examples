@@ -11,3 +11,5 @@ require_once "./HttpServer.php";
 
 $server = new HttpServer();
 $server->start();
+
+echo "Start success";

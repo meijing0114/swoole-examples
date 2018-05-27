@@ -1,6 +1,5 @@
 <?php
 
-namespace Tars\registry;
 
 class EndpointF extends \TARS_Struct
 {

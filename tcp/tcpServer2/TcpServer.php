@@ -14,12 +14,12 @@ class TcpServer
     protected $sw;
 
     protected $host = '0.0.0.0';
-    protected $port = '28891';
+    protected $port = '28892';
     protected $worker_num = 4;
     protected $servType = 'tcp';
 
     protected $application = 'SWOOLE';
-    protected $serverName = 'TCPTEST1';
+    protected $serverName = 'TCPTEST2';
 
     public function start()
     {
